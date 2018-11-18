@@ -1,3 +1,5 @@
+# Vanilla Policy Gradient
+
 import numpy as np
 import tensorflow as tf
 import gym
@@ -16,6 +18,7 @@ class VPGBuffer:
     """
 
     def __init__(self, obs_dim, act_dim, size, gamma=0.99, lam=0.95):
+        # Initialize properties
         self.obs_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32)
         self.act_buf = np.zeros(core.combined_shape(size, act_dim), dtype=np.float32)
         self.adv_buf = np.zeros(size, dtype=np.float32)
@@ -28,7 +31,7 @@ class VPGBuffer:
 
     def store(self, obs, act, rew, val, logp):
         """
-        Append one timestep of agent-environment interaction to the buffer.
+        Append one timestep of agent-environment interaction to the buffer. That is an observation
         """
         assert self.ptr < self.max_size     # buffer has to have room so you can store
         self.obs_buf[self.ptr] = obs
@@ -151,14 +154,19 @@ def vpg(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
 
     """
 
+    # set up the logger
     logger = EpochLogger(**logger_kwargs)
     logger.save_config(locals())
 
+    # generates a seed and sets it
     seed += 10000 * proc_id()
     tf.set_random_seed(seed)
     np.random.seed(seed)
 
+    # set up the environment
     env = env_fn()
+
+    # get the dimensions of the observations and action space
     obs_dim = env.observation_space.shape
     act_dim = env.action_space.shape
     
@@ -198,6 +206,7 @@ def vpg(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
     train_pi = MpiAdamOptimizer(learning_rate=pi_lr).minimize(pi_loss)
     train_v = MpiAdamOptimizer(learning_rate=vf_lr).minimize(v_loss)
 
+    #start the session and initialize the graph variables
     sess = tf.Session()
     sess.run(tf.global_variables_initializer())
 
@@ -208,6 +217,11 @@ def vpg(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
     logger.setup_tf_saver(sess, inputs={'x': x_ph}, outputs={'pi': pi, 'v': v})
 
     def update():
+        """
+        updates the policy and value function
+        """
+
+        # creates inputs from placeholders and buffer
         inputs = {k:v for k,v in zip(all_phs, buf.get())}
         pi_l_old, v_l_old, ent = sess.run([pi_loss, v_loss, approx_ent], feed_dict=inputs)
 
@@ -225,23 +239,29 @@ def vpg(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
                      DeltaLossPi=(pi_l_new - pi_l_old),
                      DeltaLossV=(v_l_new - v_l_old))
 
+    # gets the start time and resets environment and variables
     start_time = time.time()
     o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
 
     # Main loop: collect experience in env and update/log each epoch
     for epoch in range(epochs):
         for t in range(local_steps_per_epoch):
+            # get actions
             a, v_t, logp_t = sess.run(get_action_ops, feed_dict={x_ph: o.reshape(1,-1)})
 
             # save and log
             buf.store(o, a, r, v_t, logp_t)
             logger.store(VVals=v_t)
 
+            # perform a step and update the episode variables
             o, r, d, _ = env.step(a[0])
             ep_ret += r
             ep_len += 1
-
+            
+            # determine if the episode has/should be ended
             terminal = d or (ep_len == max_ep_len)
+
+            # check if the episode ended or if it's reached the max amount of steps
             if terminal or (t==local_steps_per_epoch-1):
                 if not(terminal):
                     print('Warning: trajectory cut off by epoch at %d steps.'%ep_len)
@@ -251,6 +271,7 @@ def vpg(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
                 if terminal:
                     # only save EpRet / EpLen if trajectory finished
                     logger.store(EpRet=ep_ret, EpLen=ep_len)
+                # reset environment and variables
                 o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
 
         # Save model
@@ -278,7 +299,7 @@ def vpg(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--env', type=str, default='HalfCheetah-v2')
+    parser.add_argument('--env', type=str, default='CartPole-v1')
     parser.add_argument('--hid', type=int, default=64)
     parser.add_argument('--l', type=int, default=2)
     parser.add_argument('--gamma', type=float, default=0.99)
@@ -294,6 +315,7 @@ if __name__ == '__main__':
     from spinupImplementation.utils.run_utils import setup_logger_kwargs
     logger_kwargs = setup_logger_kwargs(args.exp_name, args.seed)
 
+    # run the algorithm
     vpg(lambda : gym.make(args.env), actor_critic=core.mlp_actor_critic,
         ac_kwargs=dict(hidden_sizes=[args.hid]*args.l), gamma=args.gamma, 
         seed=args.seed, steps_per_epoch=args.steps, epochs=args.epochs,
