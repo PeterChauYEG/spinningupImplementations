@@ -150,16 +150,96 @@ Policies
 def mlp_categorical_policy(x, a, hidden_sizes, activation, output_activation, action_space):
     """
     Uses the MLP to get logits from the current policy, then sample them, and get 
-    log probabilities
+    log probabilities.
+    https://spinningup.openai.com/en/latest/spinningup/rl_intro.html#key-concepts-and-terminology
+    https://spinningup.openai.com/en/latest/spinningup/rl_intro3.html
+
     pi: samples actions from the given policy given states
     logp: log probability according to the policy, of taking actions a_ph in states x_ph
     logp_pi: log probablity accoring to the policy, of the action sampled by pi
     """
 
-    
+    # get the number of actions in action space
+    action_dim = action_space.n
+
+    # construct the hidden sizes for getting hidden sizes. 
+    # the last layer needs to have an output matching then dims of the action space
+    logit_hidden_sizes = list(hidden_sizes) + [action_dim]
+
+    # get logits using x
+    logits = mlp(x, 
+        hidden_sizes=logit_hidden_sizes, 
+        activation=activation, 
+        output_activation=output_activation)
+
+    # run the logits through a softmax to squash values to be between 0 and 1
+    # this give probabilities of the action
+    # this is P_theta(s)
+    logits_squashed = tf.log_softmax(logits)
+
+    # sample the actions from the policy
+    # feed it the logits and the number of samples we want
+    # remove 1s on axis 1
+    pi = tf.squeeze(tf.random.multinomial(logits_squashed, 1), axis=1)
+
+    # get the log prob of the policy with a
+    # a needs to be hot-one encoded to turn the actions into indices
+    # this is the log-likelihood log_pi_theta(a|s)
+    logp = tf.reduce_sum(tf.hot_one(a, depth=action_dim) * logits_squashed, axis=1)
+
+    # get the log prob of the policy with ph
+    logp_ph = tf.reduce_sum(tf.hot_one(pi, depth=action_dim) * logits_squashed, axis=1)
+
+    return pi, logp, logp_pi
+
 
 """
 Actor-Critics
 """
 def mlp_actor_critic(x, a, hidden_sizes=(64,64), activation=tf.tanh, 
                      output_activation=None, policy=None, action_space=None):
+    """
+    This is for Discrete action space.
+    Takes in placeholder symbols for state, ``x_ph``, and action, ``a_ph``, 
+    and returns the main outputs from the agent's Tensorflow computation graph:
+
+    ===========  ================  ======================================
+    Symbol       Shape             Description
+    ===========  ================  ======================================
+    ``pi``       (batch, act_dim)  | Samples actions from policy given 
+                                    | states. Used for logging.
+    ``logp``     (batch,)          | Gives log probability, according to
+                                    | the policy, of taking actions ``a_ph``
+                                    | in states ``x_ph``. Used to calculate pi loss.
+    ``logp_pi``  (batch,)          | Gives log probability, according to
+                                    | the policy, of the action sampled by
+                                    | ``pi``. Use for logging.
+    ``v``        (batch,)          | Gives the value estimate for states
+                                    | in ``x_ph``. (Critical: make sure 
+                                    | to flatten this!) Used to calculate pi loss.
+    ===========  ================  ======================================
+    """
+
+    policy = mlp_categorical_policy
+
+    # ensure we set the variable scope to not polute calculation of pi
+    with tf.variable_scope('pi'):
+        # get pi, logp, logp_pi
+        pi, logp, logp_pi = policy(x, a, hidden_sizes, activation)
+
+    # ensure we set the variable scope to not polute calculation of a
+    with tf.variable_scope('a'):
+        # generate hidden_sizes for v
+        # we only want 1 output
+        v_hidden_sizes = list(hidden_sizes) + [1]
+
+        # get v
+        # remove 1s from axis 1
+        logits = mlp(x, 
+            hidden_sizes=v_hidden_sizes, 
+            activation=activation, 
+            output_activation=output_activation)
+
+        v = tf.squeeze(logits, axis=1)
+
+    return pi, logp, logp_pi, v
