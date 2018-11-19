@@ -18,6 +18,25 @@ class VPGBuffer:
     """
 
     def __init__(self, obs_dim, act_dim, size, gamma=0.99, lam=0.95):
+    
+        # buffers are initialized to 0
+        # space buffers are of a size=(size, dim) 
+        self.obs_buf = np.zeros(core.combine_shape(size, obs_dim), dtype=np.float32)
+        self.act_buf = np.zeros(core.combine_shape(size, act_dim), dtype=np.float32)
+        
+        # advantage, reward, return, value, and logp buffers are of a size=(size) 
+        # they store scalars
+        self.adv_buf = np.zeros(size, dtype=np.float32)
+        self.rew_buf = np.zeros(size, dtype=np.float32)
+        self.ret_buf = np.zeros(size, dtype=np.float32)
+        self.val_buf = np.zeros(size, dtype=np.float32)
+        self.logp_buf = np.zeros(size, dtype=np.float32)
+        
+        # path trajectory and start index of that path are initialized to 0
+        self.ptr, self.path_start_idx = 0, 0
+
+        # initialized to params
+        self.gamma, self.lam, self.max_size = gamma, lam, size
 
     def store(self, obs, act, rew, val, logp):
         """
