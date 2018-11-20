@@ -104,6 +104,19 @@ class VPGBuffer:
         mean zero and std one). Also, resets some pointers in the buffer.
         """
 
+        # make sure the buffer is full
+        asset self.ptr = self.max_size
+
+        # reset buffer pointers
+        self.ptr, self.path_start_idx = 0, 0
+
+        # advantage normalization trick
+        adv_mean, adv_std = mpi_statistics_scalar(self.adv_buf)
+        self.adv_buf = (self.adv_buf - adv_mean) / adv_std
+
+        return [self.obs_buf, self.act_buf, self.adv_buf
+                self.ret_buf, self.logp_buf]
+
 """
 
 Vanilla Policy Gradient
@@ -176,6 +189,9 @@ def vpgImplementation(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict
     # set up the logger
     logger = EpochLogger(**logger_kwargs)
     logger.save_config(locals())
+
+    
+
 
     # Setup model saving
     logger.setup_tf_saver(sess, inputs={'x': x_ph}, outputs={'pi': pi, 'v': v})
