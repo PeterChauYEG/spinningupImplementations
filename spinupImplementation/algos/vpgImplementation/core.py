@@ -207,13 +207,13 @@ def mlp_actor_critic(x, a, hidden_sizes=(64,64), activation=tf.tanh,
     Symbol       Shape             Description
     ===========  ================  ======================================
     ``pi``       (batch, act_dim)  | Samples actions from policy given 
-                                    | states. Used for logging.
+                                    | states.
     ``logp``     (batch,)          | Gives log probability, according to
                                     | the policy, of taking actions ``a_ph``
                                     | in states ``x_ph``. Used to calculate pi loss.
     ``logp_pi``  (batch,)          | Gives log probability, according to
                                     | the policy, of the action sampled by
-                                    | ``pi``. Use for logging.
+                                    | ``pi``.
     ``v``        (batch,)          | Gives the value estimate for states
                                     | in ``x_ph``. (Critical: make sure 
                                     | to flatten this!) Used to calculate pi loss.

@@ -40,8 +40,22 @@ class VPGBuffer:
 
     def store(self, obs, act, rew, val, logp):
         """
-        Append one timestep of agent-environment interaction to the buffer. That is an observation
+        Append one timestep of agent-environment interaction to the buffer. That is 
+        an observation
         """
+
+        # ensure that tpe buffer has room to store
+        assert self.ptr < self.max_size
+
+        # store the step
+        self.obs_buf = obs
+        self.act_buf = act
+        self.rew_buf = rew
+        self.val_buf = val
+        self.logp_buf = logp
+
+        # increment the path trajectory
+        self.ptr += 1
         
     def finish_path(self, last_val=0):
         """
@@ -58,6 +72,30 @@ class VPGBuffer:
         This allows us to bootstrap the reward-to-go calculation to account
         for timesteps beyond the arbitrary episode horizon (or epoch cutoff).
         """
+
+        # get the trajectory slice
+        path_slice = slice(self.path_start_idx, self.ptr)
+
+        # get the rew and val, and append the last_val for bootstrapping 
+        # reward-to-go calculation
+        rews = np.append(self.rew_buf[path_slice], last_val)
+        vals = np.append(self.val_buf[path_slice], last_val)
+
+        # calculate GAE-Lambda advantage
+        # https://spinningup.openai.com/en/latest/spinningup/rl_intro3.html
+        # how much better or worst the action is than other actions on average
+        # relative to the current policy
+        # a method to calculate the approximate advantage function
+        # A_pi(s_t, a_t) = Q_pi(s_t, a_t) - V_pi(s_t)
+        deltas = rews[:-1] + self.gamma * val[1:] - vals[:-1]
+        self.adv_buf[path_slice] = core.discount_cumsum(deltas, 
+            self.gamma * self.lam)
+
+        # computes rewards-to-go, to be target for the value function
+        self.ret_buf[path_slice] = core.discount_cumsum(rews, self.gamma)[:-1]
+
+        # update the path start index 
+        self.path_start_idx = self.ptr
 
     def get(self):
         """
