@@ -190,8 +190,67 @@ def vpgImplementation(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict
     logger = EpochLogger(**logger_kwargs)
     logger.save_config(locals())
 
-    
+    # set up a seed
+    seed += 10000 * proc_id()
+    tf.set_random_seed(seed)
+    np.random.seed(seed)
 
+    # make a copy of the env and get dims of the spaces
+    env = env_fn()
+    obs_dim = env.observation_space.shape
+    act_dim = env.action_space.shape
+
+    # share information about the action space with the policy architecture
+    ac_kwargs['action_space'] = env.action_space
+
+    # create placeholders for inputs to computational graph
+    # observations and actions
+    x_ph, a_ph = core.placeholder_from_space(env.observation_space, env.action_space)
+
+    # advantage, returns, previous logp (log probabilities)
+    adv_ph, ret_ph, logp_old_ph = core.placeholders(None, None, None)
+
+    # main outputs from the computation graph
+    pi, logp, logp_pi, v = actor_critic(x_ph, a_ph, **ac_kwargs)
+
+    # construct a list of the placeholders (to zip with data from buffer)
+    all_phs = [x_ph, a_ph, adv_ph, ret_ph, logp]
+
+    # contruct a list of operations
+    # every step, we will get the action, value, and logprob
+    get_action_ops = [pi, v, logp_pi]
+
+    # Initialize experience buffer
+    # calculate the number of steps per epoch per processes
+    local_steps_per_epoch = int(steps_per_epoch / num_procs())
+    buf = VPGBuffer(obs_dim, act_dim, local_steps_per_epoch, gamma, lam)
+
+    # get count of variagles and log them
+    var_counts = tuple(core.count_vars(scope) for scope in ['pi', 'v'])
+    logger.log('\nNumber of parameters: \t pi: %d, \t v: %d\n'%var_counts)
+
+    # VPG objectives
+    # https://spinningup.openai.com/en/latest/algorithms/vpg.html
+    pi_loss = -tf.reduce_mean(logp * adv_ph)
+    v_loss = tf.reduce_mean((ret_ph - v)**2)
+
+    # Useful info to watch during training
+    # a sample estimate for KL-divergence, easy to compute
+    approx_kl = tf.reduce_mean(logp_old_ph - logp_pi)
+
+    # a sample estimate for entropy, also easy to compute
+    approx_ent = tf.reduce_mean(-logp)
+
+    # Optimizers
+    train_pi = MpiAdamOptimizer(learning_rate=pi_lr).minimize(pi_loss)
+    train_v = MpiAdamOptimizer(learning_rate=vf_lr).minimize(v_loss)
+
+    # create session and initialize variables
+    sess = tf.Session()
+    sess.run(tf.global_variables_initializer())
+
+    # sync params across processes
+    sess.run(sync_all_params())
 
     # Setup model saving
     logger.setup_tf_saver(sess, inputs={'x': x_ph}, outputs={'pi': pi, 'v': v})
