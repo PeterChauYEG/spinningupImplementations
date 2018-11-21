@@ -21,8 +21,8 @@ class VPGBuffer:
     
         # buffers are initialized to 0
         # space buffers are of a size=(size, dim) 
-        self.obs_buf = np.zeros(core.combine_shape(size, obs_dim), dtype=np.float32)
-        self.act_buf = np.zeros(core.combine_shape(size, act_dim), dtype=np.float32)
+        self.obs_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32)
+        self.act_buf = np.zeros(core.combined_shape(size, act_dim), dtype=np.float32)
         
         # advantage, reward, return, value, and logp buffers are of a size=(size) 
         # they store scalars
@@ -48,11 +48,11 @@ class VPGBuffer:
         assert self.ptr < self.max_size
 
         # store the step
-        self.obs_buf = obs
-        self.act_buf = act
-        self.rew_buf = rew
-        self.val_buf = val
-        self.logp_buf = logp
+        self.obs_buf[self.ptr] = obs
+        self.act_buf[self.ptr] = act
+        self.rew_buf[self.ptr] = rew
+        self.val_buf[self.ptr] = val
+        self.logp_buf[self.ptr] = logp
 
         # increment the path trajectory
         self.ptr += 1
@@ -87,7 +87,7 @@ class VPGBuffer:
         # relative to the current policy
         # a method to calculate the approximate advantage function
         # A_pi(s_t, a_t) = Q_pi(s_t, a_t) - V_pi(s_t)
-        deltas = rews[:-1] + self.gamma * val[1:] - vals[:-1]
+        deltas = rews[:-1] + self.gamma * vals[1:] - vals[:-1]
         self.adv_buf[path_slice] = core.discount_cumsum(deltas, 
             self.gamma * self.lam)
 
@@ -105,7 +105,7 @@ class VPGBuffer:
         """
 
         # make sure the buffer is full
-        asset self.ptr = self.max_size
+        assert self.ptr == self.max_size
 
         # reset buffer pointers
         self.ptr, self.path_start_idx = 0, 0
@@ -114,7 +114,7 @@ class VPGBuffer:
         adv_mean, adv_std = mpi_statistics_scalar(self.adv_buf)
         self.adv_buf = (self.adv_buf - adv_mean) / adv_std
 
-        return [self.obs_buf, self.act_buf, self.adv_buf
+        return [self.obs_buf, self.act_buf, self.adv_buf,
                 self.ret_buf, self.logp_buf]
 
 """
@@ -205,7 +205,7 @@ def vpgImplementation(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict
 
     # create placeholders for inputs to computational graph
     # observations and actions
-    x_ph, a_ph = core.placeholder_from_space(env.observation_space, env.action_space)
+    x_ph, a_ph = core.placeholders_from_spaces(env.observation_space, env.action_space)
 
     # advantage, returns, previous logp (log probabilities)
     adv_ph, ret_ph, logp_old_ph = core.placeholders(None, None, None)
@@ -214,7 +214,7 @@ def vpgImplementation(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict
     pi, logp, logp_pi, v = actor_critic(x_ph, a_ph, **ac_kwargs)
 
     # construct a list of the placeholders (to zip with data from buffer)
-    all_phs = [x_ph, a_ph, adv_ph, ret_ph, logp]
+    all_phs = [x_ph, a_ph, adv_ph, ret_ph, logp_old_ph]
 
     # contruct a list of operations
     # every step, we will get the action, value, and logprob
@@ -268,7 +268,7 @@ def vpgImplementation(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict
         pi_l_old, v_l_old, ent = sess.run([pi_loss, v_loss, approx_ent], feed_dict=inputs)
 
         # policy gradient step
-        sess.run(train_pi, feed_dic=inputs)
+        sess.run(train_pi, feed_dict=inputs)
 
         # value function learning for a number of steps
         for _ in range(train_v_iters):
@@ -291,12 +291,50 @@ def vpgImplementation(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict
     for epoch in range(epochs):
         for t in range(local_steps_per_epoch):
     
+            # get an action from the policy using an observation
+            # reshape the observation to a flat shape
+            a, v_t, logp_t = sess.run(get_action_ops, feed_dict={x_ph: o.reshape(1, -1)})
+
+            # save in the store
+            buf.store(o, a, r, v_t, logp_t)
+
             # save and log
             logger.store(VVals=v_t)
+
+            # perform the action
+            o, r, d, _ = env.step(a[0])
+
+            # increment counters
+            ep_ret += r
+            ep_len += 1
+
+            # check if the eps is done or max episode length has been reached
+            terminal = d or (ep_len == max_ep_len)
+
+            # or if the max steps for the epoch has been reached
+            if terminal or (t == local_steps_per_epoch-1):
+                # handle when not terminal
+                if not(terminal):
+                    print('Warning: trajectory cut off by epoch at %d steps.' % ep_len)
+                
+                # if the trajectory didn't reach terminal state, bootstrap value target
+                last_val = r if d else sess.run(v, feed_dict={x_ph: o.reshape(1, -1)})
+
+                buf.finish_path(last_val)
+
+                if terminal:
+                    # only save EpRet / EpLent if trajectory finshed
+                    logger.store(EpRet=ep_ret, EpLen=ep_len)
+
+                # reset poointers and env
+                o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
 
         # Save model
         if (epoch % save_freq == 0) or (epoch == epochs-1):
             logger.save_state({'env': env}, None)
+
+        # Perform VPG udpate
+        update()
 
         # Log info about epoch
         logger.log_tabular('Epoch', epoch)

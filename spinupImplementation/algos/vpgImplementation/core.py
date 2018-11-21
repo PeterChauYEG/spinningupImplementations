@@ -13,8 +13,11 @@ def combined_shape(length, shape=None):
     For CartPole-v0, observations is a Box space, and actions is a discrete space. 
     """
 
-    # initialize assume shape is None.
-    result = (length, )
+    # check if shape is None.
+    # if so, we cant check if it's scalar
+    if shape is None:
+        result = (length, )
+        return result
 
     # otherwise, handle shape as a scalar or a tuple
     if np.isscalar(shape):
@@ -31,11 +34,11 @@ def placeholder(dim=None):
     """
 
     # setup the shape for the placeholder
-    shape = (None, dim)
+    shape = combined_shape(None, dim)
 
     # create the placeholder, assume the datatype is float32
     # is there a scope issue?
-    graph_placeholder = tf.placeholder(dtype=float32, shape=shape)
+    graph_placeholder = tf.placeholder(dtype=tf.float32, shape=shape)
 
     return graph_placeholder
 
@@ -57,12 +60,13 @@ def placeholder_from_space(space):
     Handles Box and Discrete space.
     """
 
-    # setup a placeholder for Discrete space. This only has 1d 
-    space_placeholder = tf.placeholder(dtype=float32, shape=(None,))
-
     # handle Box space
-    if isinstance(Box):
+    if isinstance(space, Box):
         space_placeholder = placeholder(space.shape)
+    elif isinstance(space, Discrete):
+        # setup a placeholder for Discrete space. This only has 1d 
+        # get datatype as an int
+        space_placeholder = tf.placeholder(dtype=tf.int32, shape=(None,))
 
     return space_placeholder
 
@@ -112,7 +116,7 @@ def count_vars(scope=''):
     vars = get_vars(scope)
 
     # get the number of variables in the scope
-    vars_list = [np.prod(var.shape.as_list()) for var in vars]]
+    vars_list = [np.prod(var.shape.as_list()) for var in vars]
 
     # add them all up
     var_count = sum(vars_list)
@@ -175,20 +179,20 @@ def mlp_categorical_policy(x, a, hidden_sizes, activation, output_activation, ac
     # run the logits through a softmax to squash values to be between 0 and 1
     # this give probabilities of the action
     # this is P_theta(s)
-    logits_squashed = tf.log_softmax(logits)
+    logits_squashed = tf.nn.log_softmax(logits)
 
     # sample the actions from the policy
     # feed it the logits and the number of samples we want
     # remove 1s on axis 1
-    pi = tf.squeeze(tf.random.multinomial(logits_squashed, 1), axis=1)
+    pi = tf.squeeze(tf.multinomial(logits_squashed, 1), axis=1)
 
     # get the log prob of the policy with a
     # a needs to be hot-one encoded to turn the actions into indices
     # this is the log-likelihood log_pi_theta(a|s)
-    logp = tf.reduce_sum(tf.hot_one(a, depth=action_dim) * logits_squashed, axis=1)
+    logp = tf.reduce_sum(tf.one_hot(a, depth=action_dim) * logits_squashed, axis=1)
 
     # get the log prob of the policy with ph
-    logp_ph = tf.reduce_sum(tf.hot_one(pi, depth=action_dim) * logits_squashed, axis=1)
+    logp_pi = tf.reduce_sum(tf.one_hot(pi, depth=action_dim) * logits_squashed, axis=1)
 
     return pi, logp, logp_pi
 
@@ -225,7 +229,12 @@ def mlp_actor_critic(x, a, hidden_sizes=(64,64), activation=tf.tanh,
     # ensure we set the variable scope to not polute calculation of pi
     with tf.variable_scope('pi'):
         # get pi, logp, logp_pi
-        pi, logp, logp_pi = policy(x, a, hidden_sizes, activation)
+        pi, logp, logp_pi = policy(x, 
+                                   a, 
+                                   hidden_sizes, 
+                                   activation, 
+                                   output_activation, 
+                                   action_space)
 
     # ensure we set the variable scope to not polute calculation of a
     with tf.variable_scope('a'):
