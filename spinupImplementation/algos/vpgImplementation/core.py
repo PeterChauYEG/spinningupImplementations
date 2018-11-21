@@ -237,7 +237,7 @@ def mlp_actor_critic(x, a, hidden_sizes=(64,64), activation=tf.tanh,
                                    action_space)
 
     # ensure we set the variable scope to not polute calculation of a
-    with tf.variable_scope('a'):
+    with tf.variable_scope('v'):
         # generate hidden_sizes for v
         # we only want 1 output
         v_hidden_sizes = list(hidden_sizes) + [1]
