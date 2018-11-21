@@ -260,11 +260,32 @@ def vpgImplementation(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict
         updates the policy and value function
         """
 
+        # create inputs by zipping placeholders with their respective values 
+        # from the buffer
+        inputs = {k:v for k,v in zip(all_phs, buf.get())}
+
+        # get current loss values
+        pi_l_old, v_l_old, ent = sess.run([pi_loss, v_loss, approx_ent], feed_dict=inputs)
+
+        # policy gradient step
+        sess.run(train_pi, feed_dic=inputs)
+
+        # value function learning for a number of steps
+        for _ in range(train_v_iters):
+            sess.run(train_v, feed_dict=inputs)
+
+        # get updated loss values
+        pi_l_new, v_l_new, kl = sess.run([pi_loss, v_loss, approx_kl], feed_dict=inputs)
+        
         # Log changes from update
         logger.store(LossPi=pi_l_old, LossV=v_l_old, 
                      KL=kl, Entropy=ent, 
                      DeltaLossPi=(pi_l_new - pi_l_old),
                      DeltaLossV=(v_l_new - v_l_old))
+
+    # set start time, and init env and pointers
+    start_time = time.time()
+    o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
 
     # Main loop: collect experience in env and update/log each epoch
     for epoch in range(epochs):
