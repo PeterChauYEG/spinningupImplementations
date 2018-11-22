@@ -11,22 +11,13 @@ For Discrete action space'd environments such as CartPole-v1:
 For Box action space'd environments such as HalfCheetah-v2:
 `$ python -m spinupImplementation.run vpgImplementation --exp_name vpgHalfCheetah --env HalfCheetah-v2`
 
+## Running TRPO:
 
+For Discrete action space'd environments such as CartPole-v1:
+`$ python -m spinupImplementation.run trpoImplementation --exp_name test_trpoImplementation --env CartPole-v1`
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+For Box action space'd environments such as HalfCheetah-v2:
+`$ python -m spinupImplementation.run trpoImplementation --exp_name trpoHalfCheetah --env HalfCheetah-v2`
 
 
 ====================================================================================

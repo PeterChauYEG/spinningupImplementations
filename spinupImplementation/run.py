@@ -23,7 +23,10 @@ SUBSTITUTIONS = {'env': 'env_name',
                  'dt': 'datestamp'}
 
 # Only some algorithms can be parallelized (have num_cpu > 1):
-MPI_COMPATIBLE_ALGOS = ['vpg', 'trpo', 'ppo']
+MPI_COMPATIBLE_ALGOS = ['trpo', 
+                        'trpoImplementation', 
+                        'vpg', 
+                        'vpgImplementation']
 
 
 def friendly_err(err_msg):
@@ -175,7 +178,7 @@ if __name__ == '__main__':
     """
 
     cmd = sys.argv[1] if len(sys.argv) > 1 else 'help'
-    valid_algos = ['vpg', 'vpgImplementation']
+    valid_algos = ['trpo', 'trpoImplementation', 'vpg', 'vpgImplementation']
     valid_utils = ['plot', 'test_policy']
     valid_help = ['--help', '-h', 'help']
     valid_cmds = valid_algos + valid_utils + valid_help
