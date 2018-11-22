@@ -1,7 +1,35 @@
-Spinning up implemenation
+# Spinning up implemenation
 =========================
 
 This is my implemenations of the algorithms from the OpenAI spinning up module. Everything is from that repo. I've gutted it and am trying to understand the algorithms better by reimplementing them.
+
+## Running VPG:
+
+For Discrete action space'd environments such as CartPole-v1:
+`$ python -m spinupImplementation.run vpgImplementation --exp_name test_vpgImplementation --env CartPole-v1`
+
+For Box action space'd environments such as HalfCheetah-v2:
+`$ python -m spinupImplementation.run vpgImplementation --exp_name vpgHalfCheetah --env HalfCheetah-v2`
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+====================================================================================
 
 Welcome to Spinning Up in Deep RL! 
 ==================================

@@ -147,6 +147,22 @@ def discount_cumsum(x, discount):
 
     return C
 
+def gaussian_likelihood(x, mu, log_std, std):
+    """
+    Calculates the log-likelihood for diagonal gaussian policies
+    # https://spinningup.openai.com/en/latest/spinningup/rl_intro.html#key-concepts-and-terminology
+    
+    log_likelihood: the log likelihood of an action space
+    """
+
+    # we seem to ignore k here. Likely because we will sum it all up?
+    pre_sum = -0.5 * ((x-mu)/std)**2 + 2*log_std + np.log(2*np.pi)
+
+    # take the sum of the vector calculated above
+    log_likelihood = tf.reduce_sum(pre_sum, axis=1)
+
+    return log_likelihood
+
 """
 Policies
 """
@@ -196,6 +212,62 @@ def mlp_categorical_policy(x, a, hidden_sizes, activation, output_activation, ac
 
     return pi, logp, logp_pi
 
+def mlp_gaussian_policy(x, a, hidden_sizes, activation, output_activation, action_space):
+    """
+    Uses the MLP to get logits from the current policy, then sample them, and get 
+    log probabilities.
+
+    Because of the action space is continuous, the policy will use approximate methods to
+    determine an action to use. We will need to use a log-likelihood appropriate for this
+    calculation.
+    https://spinningup.openai.com/en/latest/spinningup/rl_intro.html#key-concepts-and-terminology
+    https://spinningup.openai.com/en/latest/spinningup/rl_intro3.html
+
+    pi: samples actions from the given policy given states
+    logp: log probability according to the policy, of taking actions a_ph in states x_ph
+    logp_pi: log probablity according to the policy, of the action sampled by pi
+    """
+
+    # here, the number of actions in the action space cannot be gotten with 
+    # '.n'. it is more of an array so it has a shape
+    # we want the last element of this list
+    action_dim = a.shape.as_list()[-1]
+
+    # Create a list of hidden sizes of the layers for the MLP
+    # the last layer should be of size 'act_dim'. This is because we want
+    # an output of the same size as there are actions to take
+    mu_hidden_sizes = list(hidden_sizes) + [action_dim]
+
+    # get the mean, mu_theta(s), for the policy using the multi-layer 
+    # perception
+    mu = mlp(x, 
+             hidden_sizes=mu_hidden_sizes, 
+             activation=activation, 
+             output_activation=output_activation)
+
+    # calculate the log standard deviation, log_sigma(s), for the policy
+    # it should be initialized to -0.5 as per exercise+1_2.py
+    # it's shape should also be the same shape as the action vector
+    init_values = -0.5 * np.ones(action_dim, dtype=np.float32)
+
+    # create it as a tf variable
+    # https://www.tensorflow.org/api_docs/python/tf/get_variable
+    log_std = tf.get_variable(name='log_std',
+                              initializer=init_values)
+
+    # get the standard deviation by take the exponent of log_std
+    std = tf.exp(log_std)
+
+    # sample stochastic actions from a gaussian distribution
+    pi = mu + tf.random_normal(tf.shape(mu)) * std
+
+    # get the log likelihood for a, actions, and pi, the actions that were 
+    # sampled
+    logp = gaussian_likelihood(a, mu, log_std, std)
+    logp_pi = gaussian_likelihood(pi, mu, log_std, std)
+
+    return pi, logp, logp_pi
+
 
 """
 Actor-Critics
@@ -224,7 +296,13 @@ def mlp_actor_critic(x, a, hidden_sizes=(64,64), activation=tf.tanh,
     ===========  ================  ======================================
     """
 
-    policy = mlp_categorical_policy
+    # Check which type of policy we should use, 
+    # Discrete action spaces use a 'categorical policy'
+    # Box action spaces use a 'gaussian policy'
+    if policy is None and isinstance(action_space, Box):
+        policy = mlp_gaussian_policy
+    elif policy is None and isinstance(action_space, Discrete):
+        policy = mlp_categorical_policy
 
     # ensure we set the variable scope to not polute calculation of pi
     with tf.variable_scope('pi'):
@@ -252,3 +330,11 @@ def mlp_actor_critic(x, a, hidden_sizes=(64,64), activation=tf.tanh,
         v = tf.squeeze(logits, axis=1)
 
     return pi, logp, logp_pi, v
+
+#
+#
+#
+# My Reimplementation
+#
+#
+#
