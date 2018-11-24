@@ -18,6 +18,24 @@ class GAEBuffer:
     """
 
     def __init__(self, obs_dim, act_dim, size, info_shapes, gamma=0.99, lam=0.95):
+        """
+        Initialize properties:
+
+        Environment:
+        observations, actions, rewards, total expected rewards
+
+        Computed:
+        advantages, values, logps, infos,
+
+        Training:
+        gamma, lam
+
+        Store:
+        path trajectory, path start index, max size of store
+
+        Get sorted info keys
+        """
+
         self.obs_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32)
         self.act_buf = np.zeros(core.combined_shape(size, act_dim), dtype=np.float32)
         self.adv_buf = np.zeros(size, dtype=np.float32)
@@ -33,6 +51,8 @@ class GAEBuffer:
     def store(self, obs, act, rew, val, logp, info):
         """
         Append one timestep of agent-environment interaction to the buffer.
+
+        Increment the path trajectory counter
         """
         assert self.ptr < self.max_size     # buffer has to have room so you can store
         self.obs_buf[self.ptr] = obs
@@ -60,7 +80,10 @@ class GAEBuffer:
         for timesteps beyond the arbitrary episode horizon (or epoch cutoff).
         """
 
+        # get current path trajectory indices
         path_slice = slice(self.path_start_idx, self.ptr)
+
+        # get current path trajectory rewards and values
         rews = np.append(self.rew_buf[path_slice], last_val)
         vals = np.append(self.val_buf[path_slice], last_val)
         
@@ -71,6 +94,7 @@ class GAEBuffer:
         # the next line computes rewards-to-go, to be targets for the value function
         self.ret_buf[path_slice] = core.discount_cumsum(rews, self.gamma)[:-1]
         
+        # update the part trajectory start of the next trajectory
         self.path_start_idx = self.ptr
 
     def get(self):
@@ -80,10 +104,15 @@ class GAEBuffer:
         mean zero and std one). Also, resets some pointers in the buffer.
         """
         assert self.ptr == self.max_size    # buffer has to be full before you can get
+
+        # reset the path trajectory counter and start index
         self.ptr, self.path_start_idx = 0, 0
+
         # the next two lines implement the advantage normalization trick
         adv_mean, adv_std = mpi_statistics_scalar(self.adv_buf)
         self.adv_buf = (self.adv_buf - adv_mean) / adv_std
+
+        # return obs_buf, act_buf, adv_buf, ret_buf, logp_buf, and info_bUf (sorted) as a list
         return [self.obs_buf, self.act_buf, self.adv_buf, self.ret_buf, 
                 self.logp_buf] + core.values_as_sorted_list(self.info_bufs)
 
@@ -198,13 +227,16 @@ def trpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
 
     """
 
+    # initialize logger and save it
     logger = EpochLogger(**logger_kwargs)
     logger.save_config(locals())
 
+    # initialize seed, and set tf and np
     seed += 10000 * proc_id()
     tf.set_random_seed(seed)
     np.random.seed(seed)
 
+    # get the env function, observation dimensions, and action dimensions
     env = env_fn()
     obs_dim = env.observation_space.shape
     act_dim = env.action_space.shape
@@ -226,8 +258,13 @@ def trpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
     get_action_ops = [pi, v, logp_pi] + core.values_as_sorted_list(info)
 
     # Experience buffer
+    # calculate the number of steps per epoch per process
     local_steps_per_epoch = int(steps_per_epoch / num_procs())
+
+    # get the info shapes
     info_shapes = {k: v.shape.as_list()[1:] for k,v in info_phs.items()}
+
+    # initialize the bugger
     buf = GAEBuffer(obs_dim, act_dim, local_steps_per_epoch, info_shapes, gamma, lam)
 
     # Count variables
@@ -235,6 +272,9 @@ def trpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
     logger.log('\nNumber of parameters: \t pi: %d, \t v: %d\n'%var_counts)
 
     # TRPO losses
+    # ratio of pi / pi_old
+    # pi loss
+    # v loss
     ratio = tf.exp(logp - logp_old_ph)          # pi(a|s) / pi_old(a|s)
     pi_loss = -tf.reduce_mean(ratio * adv_ph)
     v_loss = tf.reduce_mean((ret_ph - v)**2)
@@ -243,16 +283,25 @@ def trpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
     train_vf = MpiAdamOptimizer(learning_rate=vf_lr).minimize(v_loss)
 
     # Symbols needed for CG solver
+    # pi params
+    # gradient
+    # v_ph and hvp
     pi_params = core.get_vars('pi')
     gradient = core.flat_grad(pi_loss, pi_params)
     v_ph, hvp = core.hessian_vector_product(d_kl, pi_params)
+
+    # check if the damping coeff is needed
+    # if so, update hvp (damping_coeff * v_ph)
     if damping_coeff > 0:
         hvp += damping_coeff * v_ph
 
     # Symbols for getting and setting params
+    # get pi params
+    # set pi params
     get_pi_params = core.flat_concat(pi_params)
     set_pi_params = core.assign_params_from_flat(v_ph, pi_params)
 
+    # create a tf session and initialize it's variables
     sess = tf.Session()
     sess.run(tf.global_variables_initializer())
 
@@ -267,34 +316,73 @@ def trpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
         Conjugate gradient algorithm
         (see https://en.wikipedia.org/wiki/Conjugate_gradient_method)
         """
+
+        # initialize x as 0s of shape b
         x = np.zeros_like(b)
-        r = b.copy() # Note: should be 'b - Ax(x)', but for x=0, Ax(x)=0. Change if doing warm start.
+
+        # Note: should be 'b - Ax(x)', but for x=0, Ax(x)=0. Change if doing warm start.
+        # make a copy of b and r as r and p
+        r = b.copy() 
         p = r.copy()
+
+        # calculate r dot old (r dot r)
         r_dot_old = np.dot(r,r)
+
+        # for cg_iterations
         for _ in range(cg_iters):
+
+            # calc z as Ax(p)
             z = Ax(p)
+
+            # calculate alpha 
             alpha = r_dot_old / (np.dot(p, z) + EPS)
+
+            # increment x
             x += alpha * p
+
+            # decrement r
             r -= alpha * z
+
+            # calculate r dot new (r dot r)
             r_dot_new = np.dot(r,r)
+
+            # calculate p
             p = r + (r_dot_new / r_dot_old) * p
+
+            # update r dot old with r dot new
             r_dot_old = r_dot_new
         return x
 
     def update():
         # Prepare hessian func, gradient eval
+        # get inputs as a dictionary, all phs and buffer
         inputs = {k:v for k,v in zip(all_phs, buf.get())}
+
+        # calculate Hx
         Hx = lambda x : mpi_avg(sess.run(hvp, feed_dict={**inputs, v_ph: x}))
+
+        # get g, pi_l_old, v_l_old
         g, pi_l_old, v_l_old = sess.run([gradient, pi_loss, v_loss], feed_dict=inputs)
+
+        # get g and pi_l_old averages
         g, pi_l_old = mpi_avg(g), mpi_avg(pi_l_old)
 
         # Core calculations for TRPO or NPG
+        # get x
         x = cg(Hx, g)
+
+        # get alpha
         alpha = np.sqrt(2*delta/(np.dot(x, Hx(x))+EPS))
+
+        # get old paramers
         old_params = sess.run(get_pi_params)
 
         def set_and_eval(step):
+            # set pi params with v_ph
+            # old_params - alpha * x * step
             sess.run(set_pi_params, feed_dict={v_ph: old_params - alpha * x * step})
+
+            # return average of d_kl and pi_loss operation
             return mpi_avg(sess.run([d_kl, pi_loss], feed_dict=inputs))
 
         if algo=='npg':
@@ -303,6 +391,7 @@ def trpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
 
         elif algo=='trpo':
             # trpo augments npg with backtracking line search, hard kl
+            # for backtrack iterations
             for j in range(backtrack_iters):
                 kl, pi_l_new = set_and_eval(step=backtrack_coeff**j)
                 if kl <= delta and pi_l_new <= pi_l_old:
@@ -316,8 +405,11 @@ def trpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
                     kl, pi_l_new = set_and_eval(step=0.)
 
         # Value function updates
+        # for train_v_iterations
         for _ in range(train_v_iters):
             sess.run(train_vf, feed_dict=inputs)
+
+        # update v_l_new with v_loss operation
         v_l_new = sess.run(v_loss, feed_dict=inputs)
 
         # Log changes from update
@@ -325,33 +417,52 @@ def trpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
                      DeltaLossPi=(pi_l_new - pi_l_old),
                      DeltaLossV=(v_l_new - v_l_old))
 
+    # Update start time
     start_time = time.time()
+
+    # reset variables
+    # o, r, d, ep_ret, ep_len
     o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
 
     # Main loop: collect experience in env and update/log each epoch
     for epoch in range(epochs):
         for t in range(local_steps_per_epoch):
+            # get agent outputs
             agent_outs = sess.run(get_action_ops, feed_dict={x_ph: o.reshape(1,-1)})
+
+            # decontruct the above to a, v_t, logp_t, info_t
             a, v_t, logp_t, info_t = agent_outs[0][0], agent_outs[1], agent_outs[2], agent_outs[3:]
 
             # save and log
             buf.store(o, a, r, v_t, logp_t, info_t)
             logger.store(VVals=v_t)
 
+            # take an action
             o, r, d, _ = env.step(a)
+
+            # update ep rewards and length
             ep_ret += r
             ep_len += 1
 
+            # check if the episode is done
             terminal = d or (ep_len == max_ep_len)
+
+            # check if terminal or at max t for local epoch
             if terminal or (t==local_steps_per_epoch-1):
                 if not(terminal):
                     print('Warning: trajectory cut off by epoch at %d steps.'%ep_len)
                 # if trajectory didn't reach terminal state, bootstrap value target
                 last_val = r if d else sess.run(v, feed_dict={x_ph: o.reshape(1,-1)})
+
+                # add the finish path to buffer
                 buf.finish_path(last_val)
+
                 if terminal:
                     # only save EpRet / EpLen if trajectory finished
                     logger.store(EpRet=ep_ret, EpLen=ep_len)
+
+                # reset environment variables
+                # o, r, d, ep_ret, ep_len
                 o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
 
         # Save model
