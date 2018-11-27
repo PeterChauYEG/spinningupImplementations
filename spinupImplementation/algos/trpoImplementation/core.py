@@ -142,7 +142,11 @@ def gaussian_likelihood(x, mu, log_std):
     Returns: The log likelihood an action
     """
 
-    
+    presum = -0.5 * ((x - mu) / tf.exp(log_std)) ** 2 + 2*log_std + np.log(2 * np.pi)
+
+    summed = tf.reduce_sum(presum, axis=1)
+
+    return summed
     
 
 def diagonal_gaussian_kl(mu0, log_std0, mu1, log_std1):
@@ -153,7 +157,12 @@ def diagonal_gaussian_kl(mu0, log_std0, mu1, log_std1):
     https://spinningup.openai.com/en/latest/algorithms/trpo.html
     """
     
-    
+    var0, var1 = tf.exp(2 * log_std0), tf.exp(2 * log_std1)
+    pre_sum = 0.5 * (((mu1-mu0)**@ + var0)/(var1) - 1) + log_std0 - log_std1
+    all_kls = tf.reduce_sum(pre_sum, axis=1)
+    kl_means = tf.reduce_mean(all_kls)
+
+    return kl_means
 
 def categorical_kl(logp0, logp1):
     """
