@@ -13,7 +13,17 @@ def combined_shape(length, shape=None):
     Should handle when the shape is None, a scalar, or a tuple
     """
 
+    if shape is None:
+        return (length,)
     
+    combined_shape = None 
+
+    if np.isscalar(shape):
+        combined_shape = (length, shape) 
+    else:
+        combined_shape = (length, *shape)
+
+    return combined_shape
 
 def keys_as_sorted_list(dict):
     """
@@ -21,7 +31,11 @@ def keys_as_sorted_list(dict):
     then sort the list of keys
     """
 
+    keys = dict.keys()
+    keys_list = list(keys)
+    sorted_keys_list = sorted(keys_list)
     
+    return sorted_keys_list
 
 def values_as_sorted_list(dict):
     """
@@ -29,28 +43,46 @@ def values_as_sorted_list(dict):
     those keys. Return them as a list
     """
 
+    keys = keys_as_sorted_list(dict)
+    vals = [dict[key] for key in keys]
     
+    return vals
 
 def placeholder(dim=None):
     """
-    Creates a computation graph placeholder given some dimensions, of datatype: float32
+    Creates a computation graph placeholder given some dimensions, of 
+    datatype: float32
     """
 
+    shape = combined_shape(None, dim)
+    ph = tf.placeholder(dtype=tf.float32, shape=shape)
     
+    return ph
 
 def placeholders(*args):
     """
     Creates a list of computation graph placeholders given a set of dimensions
     """
 
+    phs = [placeholder(dim) for dim in args]
     
+    return phs
 
 def placeholder_from_space(space):
     """
-    Given a space, Box or Discrete, create a computation placeholder. Box should
+    Given a space, Box or Discrete, create a computation placeholder. Discrete should
     have a datatype of int32
     """
 
+    shape = space.shape
+    ph = None 
+
+    if isinstance(space, Box):
+        ph = placeholder(shape)
+    elif isinstance(space, Discrete):
+        ph = tf.placeholder(dtype=tf.int32, shape=(None,))
+
+    return ph
     
 
 def placeholders_from_spaces(*args):
@@ -58,7 +90,9 @@ def placeholders_from_spaces(*args):
     Given a set of spaces, create a list of computation graph placesholders for them
     """
 
-    
+    phs = [placeholder_from_space(space) for space in args]
+
+    return phs
 
 def mlp(x, hidden_sizes=(32,), activation=tf.tanh, output_activation=None):
     """
@@ -66,7 +100,15 @@ def mlp(x, hidden_sizes=(32,), activation=tf.tanh, output_activation=None):
     Assume the last layer will have different output_activation (linear)
     """
 
-    
+    layer_sizes = hidden_sizes[:-1]
+    last_size = hidden_sizes[-1]
+
+    for h in layer_sizes:
+        x = tf.layers.dense(x, hidden_sizes=h, activation=tf.tahn)
+
+    nn = tf.layers.dense(x, hidden_sizes=last_size, activation=output_activation)
+
+    return nn
 
 def get_vars(scope=''):
     """
@@ -74,15 +116,23 @@ def get_vars(scope=''):
     that scope. Return them as a list.
     """
 
-    
+    trainable_vars = tf.trainable_vars()
+    vars = [var for var in trainable_vars if scope in var.name]
+
+    return vars
 
 def count_vars(scope=''):
     """
     Given a computation graph variable scope, get the trainable variables from it. 
-    Then calculate the total amount of them. Take into account that there are many layers.
+    Then calculate the total amount of them. Take into account that there are many 
+    layers.
     """
 
+    vars = get_vars(scope)
+    vars_list = [np.prod(var.shape.as_list()) for var in vars]
+    total_vars = sum(vars_list)
     
+    return total_vars
 
 def gaussian_likelihood(x, mu, log_std):
     """
@@ -92,6 +142,7 @@ def gaussian_likelihood(x, mu, log_std):
     Returns: The log likelihood an action
     """
 
+    
     
 
 def diagonal_gaussian_kl(mu0, log_std0, mu1, log_std1):
