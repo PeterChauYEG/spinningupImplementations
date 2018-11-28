@@ -170,16 +170,21 @@ def categorical_kl(logp0, logp1):
     where the distributions are input as log probs.
     """
     
-    
+    all_kls = tf.reduce_sum(tf.exp(logp1) * (logp1 - logp0), axis=1)
+    kls_mean = tf.reduce_mean(all_kls)
+
+    return kls_mean
 
 def flat_concat(xs):
     """
-    Given a variable, flatten it, then combines them along the same axis
+    Given variables, flatten it, then combines them along the same axis
     https://www.tensorflow.org/api_docs/python/tf/concat
     https://www.tensorflow.org/api_docs/python/tf/reshape
     """
 
+    flat_concated = tf.concat([tf.reshape(x, (-1,)) for x in xs], axis=0)
 
+    return flat_concated
 
 def flat_grad(f, params):
     """
@@ -187,7 +192,7 @@ def flat_grad(f, params):
     https://www.tensorflow.org/api_docs/python/tf/gradients
     """
     
-
+    return flat_concat(tf.gradients(xs=params, ys=f))
 
 def hessian_vector_product(f, params):
     """
@@ -201,7 +206,9 @@ def hessian_vector_product(f, params):
     """
 
     # for H = grad**2 f, compute Hx
-
+    g = flat_grad(f, params)
+    x = tf.placeholder(tf.float32, shape=g.shape)
+    return x, flat_grad(tf.reduce_sum(g*x), params)
 
 def assign_params_from_flat(x, params):
     """
@@ -218,7 +225,10 @@ def assign_params_from_flat(x, params):
     """
 
     # the 'int' is important for scalars
-    
+    flat_size = lambda p : int(np.prod(p.shape.as_list()))
+    splits = tf.split(x, [flat_size(p) for p in params])
+    new_params = [tf.reshape(p_new, p.shape) for p, p_new in zip(params, splits)]
+    return tf.group([tf.assign(p, p_new) for p, p_new in zip(params, new_params)])
 
 def discount_cumsum(x, discount):
     """
@@ -238,6 +248,7 @@ def discount_cumsum(x, discount):
     # https://stackoverflow.com/questions/47970683/vectorize-a-numpy-discount-calculation    
     """
     
+    return scipy.signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
 
 """
 Policies
